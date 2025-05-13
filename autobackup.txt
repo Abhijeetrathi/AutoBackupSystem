@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# Auto Backup System - Advanced Version
+
+# ========== INITIAL SETUP ==========
+echo "====== Auto Backup System ======"
+echo "Let's configure your backup..."
+
+# 1. Ask for system directories
+read -p "Enter space-separated system directories to backup [default: /etc /usr/local/bin]: " -a USER_SYSTEM_DIRS
+SYSTEM_DIRS=("${USER_SYSTEM_DIRS[@]:-/etc /usr/local/bin}")
+
+# 2. Ask for user file directory
+read -p "Enter user directory to scan for files (default: $HOME/Documents): " USER_DIR
+USER_FILES_DIR="${USER_DIR:-$HOME/Documents}"
+
+# 3. Ask for compression type
+echo "Choose compression type:"
+select COMP in gzip bzip2; do
+    if [[ "$COMP" == "gzip" || "$COMP" == "bzip2" ]]; then
+        COMPRESSION=$COMP
+        break
+    else
+        echo "Invalid choice. Please select gzip or bzip2."
+    fi
+done
+
+# 4. Ask for email
+read -p "Enter your email to receive log file (optional): " EMAIL
+
+# ========== CONSTANTS ==========
+FILE_TYPES=("*.pdf" "*.mp3" "*.mp4")
+CRUCIAL_FILES=("/etc/passwd" "/etc/fstab")
+BACKUP_DIR="./backups"
+LOG_DIR="./logs"
+TIMESTAMP=$(date +%F_%T)
+LOG_FILE="$LOG_DIR/backup_log_$TIMESTAMP.log"
+
+# Create necessary dirs
+mkdir -p "$BACKUP_DIR/system" "$BACKUP_DIR/user" "$LOG_DIR"
+
+# ========== START LOG ==========
+echo "=============================" | tee "$LOG_FILE"
+echo "Auto Backup Started: $(date)" | tee -a "$LOG_FILE"
+echo "=============================" | tee -a "$LOG_FILE"
+
+# ========== SYSTEM FILES BACKUP ==========
+echo "[+] Backing up system files using rsync..." | tee -a "$LOG_FILE"
+for dir in "${SYSTEM_DIRS[@]}"; do
+    echo "Backing up: $dir" | tee -a "$LOG_FILE"
+    rsync -a --stats "$dir" "$BACKUP_DIR/system/" >> "$LOG_FILE" 2>&1
+done
+
+# ========== USER FILES COMPRESSION ==========
+echo "[+] Finding and compressing user files..." | tee -a "$LOG_FILE"
+TMP_FILE_LIST="/tmp/user_files_to_compress.txt"
+> "$TMP_FILE_LIST"
+
+for ext in "${FILE_TYPES[@]}"; do
+    find "$USER_FILES_DIR" -type f -name "$ext" >> "$TMP_FILE_LIST"
+done
+
+ARCHIVE_NAME="user_files_$TIMESTAMP"
+
+if [ "$COMPRESSION" == "bzip2" ]; then
+    tar -cvjf "$BACKUP_DIR/user/$ARCHIVE_NAME.tar.bz2" -T "$TMP_FILE_LIST" >> "$LOG_FILE" 2>&1
+else
+    tar -cvzf "$BACKUP_DIR/user/$ARCHIVE_NAME.tar.gz" -T "$TMP_FILE_LIST" >> "$LOG_FILE" 2>&1
+fi
+
+rm "$TMP_FILE_LIST"
+
+# ========== FILE SIZE STATS ==========
+echo "[+] Calculating size..." | tee -a "$LOG_FILE"
+ORIGINAL_SIZE=$(du -sh "$USER_FILES_DIR" | cut -f1)
+BACKUP_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
+
+echo "Original Files Size: $ORIGINAL_SIZE" | tee -a "$LOG_FILE"
+echo "Total Backup Size: $BACKUP_SIZE" | tee -a "$LOG_FILE"
+
+# ========== CRUCIAL FILES ==========
+echo "[+] Crucial Files:" | tee -a "$LOG_FILE"
+for file in "${CRUCIAL_FILES[@]}"; do
+    if [ -f "$file" ]; then
+        echo " - $file" | tee -a "$LOG_FILE"
+    else
+        echo " - $file [NOT FOUND]" | tee -a "$LOG_FILE"
+    fi
+done
+
+# ========== BANDWIDTH STATS ==========
+echo "[+] Bandwidth/Transfer Stats from rsync:" | tee -a "$LOG_FILE"
+grep "Total transferred file size" "$LOG_FILE" | tee -a "$LOG_FILE"
+
+# ========== SUMMARY ==========
+echo -e "\n======= BACKUP SUMMARY =======" | tee -a "$LOG_FILE"
+echo "Date: $(date)" | tee -a "$LOG_FILE"
+echo "System Directories: ${#SYSTEM_DIRS[@]}" | tee -a "$LOG_FILE"
+echo "Compressed Types: ${FILE_TYPES[*]}" | tee -a "$LOG_FILE"
+echo "Compression Used: $COMPRESSION" | tee -a "$LOG_FILE"
+echo "Original Size: $ORIGINAL_SIZE" | tee -a "$LOG_FILE"
+echo "Backup Size: $BACKUP_SIZE" | tee -a "$LOG_FILE"
+echo "Stored at: $BACKUP_DIR" | tee -a "$LOG_FILE"
+echo "===============================" | tee -a "$LOG_FILE"
+
+echo "[✔] Backup completed successfully!"
+
+# ========== EMAIL LOG FILE ==========
+if [[ -n "$EMAIL" ]]; then
+    if command -v mail >/dev/null; then
+        cat "$LOG_FILE" | mail -s "Backup Log - $(date)" "$EMAIL"
+        echo "Log emailed to $EMAIL"
+    else
+        echo "[!] Email failed: 'mail' command not found. Try installing 'mailutils'." | tee -a "$LOG_FILE"
+    fi
+fi
+
+
+
+
